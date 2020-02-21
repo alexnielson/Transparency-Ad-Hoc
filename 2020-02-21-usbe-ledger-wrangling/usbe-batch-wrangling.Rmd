@@ -1,0 +1,543 @@
+---
+title: "usbe-batch-wrangling"
+author: "Alexander Nielson"
+date: "2/20/2020"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# 0. Notes
+Summary: This script was written to help finance auditors Ben and Taylor while they were auditing LEAs. Tae had already queried the data for them, but they were manually creating pivot tables for each LEA, and this was a time consuming process for them. John Dougall, had Matt ask me to see if I could make a script that would get each LEA's transactional records in the a format similar to the pivot tables already created. This script is my attempt at doing so. This script could be improved by making the exported documents prettier ie: bolded lines, better font, styles, etc. , but we were under time constrainsts so aesthetics were sacrificed. Also, there probably exists a better way of wrangling the data, so that it would look like the excel pivot table, but I did my best lmao. Sorry for the ugly code future Alex Nielson
+
+The basic idea is this: 
+1. Query all the LEA names.
+2. For each LEA, query all data from FY 2019. 
+3. Aggregate the Revenue by program1, program2, cat2 and net_amount. Wrangle into correct format similar to  pivot table.
+4. Aggregate the Expenditures by Program1, program2, cat3, and net_amount. Wrangle into correct format similar to  pivot table.
+5. Format a tibble to export
+6. Export each LEA to a Excel tab, inside a master worksheet. 
+
+Time: run all takes about 20-25 minutes to execute. 
+
+
+# I. Load Libraries
+```{r}
+library(lubridate)
+library(magrittr)
+library(odbc)
+library(readxl) 
+library(tidyverse)
+library(stringi) 
+library(tidyr)
+library(openxlsx)
+library(beepr)
+```
+
+# II. Connect to Database 
+```{r}
+dsn_aws        <- "transpAWS"
+odbc_aws <- dbConnect(odbc::odbc(), dsn_aws)
+```
+
+# III. User Defined Functions 
+```{r}
+query_fy2019 <- function(lea_name){
+  temp<- 
+dbGetQuery(
+  odbc_aws,
+  paste0(
+  "SELECT 
+    t.id,
+    t.batch_id,
+    t.fiscal_year,
+    t.type,
+    entity.name as entity_name,
+    entity.govt_lvl, 
+    transaction_group.name as fund1, 
+    transaction_group2.name as fund2, 
+    transaction_group3.name as fund3, 
+    transaction_group4.name as fund4, 
+    transaction_group5.name as org1, 
+    transaction_group6.name as org2, 
+    transaction_group7.name as org3, 
+    transaction_group8.name as org4,
+    transaction_group15.name as cat1, 
+    transaction_group16.name as cat2, 
+    transaction_group17.name as cat3, 
+    transaction_group18.name as cat4, 
+    vendor.name as vendor_name, 
+    t.posting_date, 
+    t.description, 
+    t.entity_trans_id, 
+    t.ref_id, 
+    t.contract_name, 
+    t.contract_number, 
+    vendor.title, 
+    vendor.hourly_rate,
+    t.amount, 
+    t.account_number, 
+    transaction_group22.name as program1, 
+    transaction_group23.name as program2, 
+    transaction_group24.name as program3, 
+    transaction_group25.name as program4
+  FROM transaction t
+  INNER JOIN batch ON batch_id = batch.id
+  INNER JOIN entity ON entity_id = entity.id
+  INNER JOIN vendor ON vendor_id = vendor.id
+  LEFT JOIN transaction_group ON t.Fund1 = transaction_group.id
+  LEFT JOIN transaction_group as transaction_group2 ON t.Fund2 = transaction_group2.id
+  LEFT JOIN transaction_group as transaction_group3 ON t.Fund3 = transaction_group3.id
+  LEFT JOIN transaction_group as transaction_group4 ON t.Fund4 = transaction_group4.id
+  LEFT JOIN transaction_group as transaction_group5 ON t.Org1 = transaction_group5.id
+  LEFT JOIN transaction_group as transaction_group6 ON t.Org2 = transaction_group6.id
+  LEFT JOIN transaction_group as transaction_group7 ON t.Org3 = transaction_group7.id
+  LEFT JOIN transaction_group as transaction_group8 ON t.Org4 = transaction_group8.id
+  LEFT JOIN transaction_group as transaction_group9 ON t.Org5 = transaction_group9.id
+  LEFT JOIN transaction_group as transaction_group10 ON t.Org6 = transaction_group10.id
+  LEFT JOIN transaction_group as transaction_group11 ON t.Org7 = transaction_group11.id
+  LEFT JOIN transaction_group as transaction_group12 ON t.Org8 = transaction_group12.id
+  LEFT JOIN transaction_group as transaction_group13 ON t.Org9 = transaction_group13.id
+  LEFT JOIN transaction_group as transaction_group14 ON t.Org10 = transaction_group14.id
+  LEFT JOIN transaction_group as transaction_group15 ON t.cat1 = transaction_group15.id
+  LEFT JOIN transaction_group as transaction_group16 ON t.cat2 = transaction_group16.id
+  LEFT JOIN transaction_group as transaction_group17 ON t.cat3 = transaction_group17.id
+  LEFT JOIN transaction_group as transaction_group18 ON t.cat4 = transaction_group18.id
+  LEFT JOIN transaction_group as transaction_group19 ON t.cat5 = transaction_group19.id
+  LEFT JOIN transaction_group as transaction_group20 ON t.cat6 = transaction_group20.id
+  LEFT JOIN transaction_group as transaction_group21 ON t.cat7 = transaction_group21.id
+  LEFT JOIN transaction_group as transaction_group22 ON t.Program1 = transaction_group22.id
+  LEFT JOIN transaction_group as transaction_group23 ON t.Program2 = transaction_group23.id
+  LEFT JOIN transaction_group as transaction_group24 ON t.Program3 = transaction_group24.id
+  LEFT JOIN transaction_group as transaction_group25 ON t.Program4 = transaction_group25.id
+  LEFT JOIN transaction_group as transaction_group26 ON t.Program5 = transaction_group26.id
+  LEFT JOIN transaction_group as transaction_group27 ON t.Program6 = transaction_group27.id
+  LEFT JOIN transaction_group as transaction_group28 ON t.Program7 = transaction_group28.id
+  LEFT JOIN transaction_group as transaction_group29 ON t.Function1 = transaction_group29.id
+  LEFT JOIN transaction_group as transaction_group30 ON t.Function2 = transaction_group30.id
+  LEFT JOIN transaction_group as transaction_group31 ON t.Function3 = transaction_group31.id
+  LEFT JOIN transaction_group as transaction_group32 ON t.Function4 = transaction_group32.id
+  LEFT JOIN transaction_group as transaction_group33 ON t.Function5 = transaction_group33.id
+  LEFT JOIN transaction_group as transaction_group34 ON t.Function6 = transaction_group34.id
+  LEFT JOIN transaction_group as transaction_group35 ON t.Function7 = transaction_group35.id
+  WHERE entity.name = '",lea_name,"'
+    AND t.fiscal_year = 2019
+  "
+  )) %>% 
+  as_tibble() 
+}
+```
+
+```{r}
+generate_ledger_report <- function(lea_name){
+  
+  temp <- query_fy2019(lea_name = lea_name )
+  
+  #Separate by Year
+fy14 <- temp %>%
+  filter(fiscal_year=="2014")
+fy15 <- temp %>%
+  filter(fiscal_year=="2015")
+fy16 <- temp %>%
+  filter(fiscal_year=="2016")
+fy17 <- temp %>%
+  filter(fiscal_year=="2017")
+fy18 <- temp %>%
+  filter(fiscal_year=="2018")
+fy19 <- temp %>%
+  filter(fiscal_year=="2019")
+fy20 <- temp %>%
+  filter(fiscal_year=="2020")
+
+report_by_year <- list(
+  fy14 = fy14,
+  fy15 = fy15,
+  fy16 = fy16,
+  fy17 = fy17,
+  fy18 = fy18,
+  fy19 = fy19,
+  fy20 = fy20
+  
+)
+
+rm(fy14,
+   fy15,
+   fy16,
+   fy17,
+   fy18,
+   fy19,
+   fy20)
+
+#Revenue =======================================================================
+# 
+# Wrangle 
+test_agg_by_p1_p2_c2 <- report_by_year %>%
+  pluck("fy19") %>%
+  group_by(program1, program2, cat2,type ) %>%
+  summarize(net_amount = sum(amount)) 
+
+
+test_agg_by_p1 <- report_by_year %>% 
+  pluck("fy19") %>% 
+  group_by(program1,type) %>% 
+  summarize(net_amount = sum(amount)) %>% 
+  mutate(program2 = NA,
+         cat2     = NA)
+
+test_agg_by_p2 <- report_by_year %>% 
+  pluck("fy19") %>% 
+  group_by(program2,type) %>% 
+  summarize(net_amount = sum(amount)) %>% 
+  mutate(program1 = NA,
+         cat2     = NA)
+
+
+
+agg <- test_agg_by_p1_p2_c2 %>%
+  bind_rows(test_agg_by_p1) %>% 
+  bind_rows(test_agg_by_p2)
+
+agg2 <- as.data.frame(agg)
+
+
+atomized <- agg2 %>%
+  # mutate(
+  #   program1_code = str_extract(program1, "^[:digit:]+"),
+  #   program2_code = str_extract(program2, "^[:digit:]+"),
+  #   cat3_code = str_extract(cat3, "^[:digit:]+"),
+  #   concat3  = paste(program2_code,cat3_code)
+  # ) %>% 
+  replace_na(list(program1="0001",
+                   program2="0001",
+                   cat2="0001")) %>% 
+  arrange(program1, program2,cat2)
+
+atomized_rev <- atomized %>% filter(type ==2)
+
+rev_primary <- atomized_rev %>%
+  mutate(
+    temp_cat = case_when(
+      program1 == "0001" ~ "program2-header",
+      program1 != "0001" & program2 == "0001" ~ "program1-header",
+      program1 != "0001" & program2 != "0001" & cat2 != "0001" ~ "cat2-header1",
+      program1 != "0001" & program2 != "0001" & cat2 == "0001" ~ "cat2-header2"
+    ),
+    
+    #debugging logic
+    # cat3 = case_when(
+    #   program1 == "0001" ~ "program2-header",
+    #   program1 != "0001" & program2 == "0001" ~ "p1!=0001 & p2 == 0001",
+    #   program1 != "0001" & program2 != "0001" & cat3 != "0001" ~ cat3,
+    #   program1 != "0001" & program2 != "0001" & cat3 == "0001" ~ "(blank)"
+    # )
+   
+    cat2 = case_when(
+      program1 == "0001" ~ "0001",
+      program1 != "0001" & program2 == "0001" ~ "0001",
+      program1 != "0001" & program2 != "0001" & cat2 != "0001" ~ cat2,
+      program1 != "0001" & program2 != "0001" & cat2 == "0001" ~ "(blank)"
+    ),
+    
+    program1 = case_when(
+      str_extract(program2, "^[:digit:]") == "0" & cat2 =="0001" & program2!="0001"~ "0001 REGULAR PROGRAMS - ELEMENTARY/SECONDARY (LOCAL)",
+      str_extract(program2, "^[:digit:]{2}") == "12" & cat2 =="0001" & program2!="0001"~ "1200 SPECIAL EDUCATION",
+      str_extract(program2, "^[:digit:]{2}") == "15" & cat2 =="0001" & program2!="0001"~ "1500 SUMMER SCHOOL AND EXTENDED YEAR PROGRAMS",
+      str_extract(program2, "^[:digit:]{2}") == "16" & cat2 =="0001" & program2!="0001"~ "1600 ADULT/CONTINUING EDUCATION PROGRAMS",
+      str_extract(program2, "^[:digit:]{2}") == "20" & cat2 =="0001" & program2!="0001"~ "2000 SCHOOL LEVEL PROGRAMS",
+      str_extract(program2, "^[:digit:]{2}") == "37" & cat2 =="0001" & program2!="0001"~ "3700 COMMUNITY SERVICES PROGRAMS",
+      str_extract(program2, "^[:digit:]") == "5" & cat2 =="0001" & program2!="0001"~ "5000 STATE PROGRAMS (Except Sp Ed, Adult Ed, ATE prog)",
+      str_extract(program2, "^[:digit:]") == "7" & cat2 =="0001" & program2!="0001"~ "7000 FEDERAL PROGRAMS",
+      str_extract(program2, "^[:digit:]") == "8" & cat2 =="0001" & program2!="0001"~ "8000 ENTERPRISE PROGRAMS",
+      str_extract(program2, "^[:digit:]") == "9" & cat2 =="0001" & program2!="0001"~ "9999 UNDISTRIBUTED BY PROGRAM",
+      TRUE ~ program1
+    )
+    
+  ) %>% 
+  
+  #factor on temp_cat. make program1 > program2 > cat3-header1 > cat3-headerblank
+  mutate(temp_cat = factor(
+      temp_cat,
+      levels = c(
+        "program1-header",
+        "program2-header",
+        "cat2-header1",
+        "cat2-header2"
+      )
+    )
+)
+
+correct_arrange_rev <- rev_primary %>% arrange(program1,program2, temp_cat,cat2 )
+
+correct_row_name_rev<-correct_arrange_rev %>% 
+  mutate(
+    tier_name = case_when (
+      temp_cat == "program1-header" ~ program1,
+      temp_cat == "program2-header" ~ program2,
+      temp_cat == "cat2-header1"    ~ cat2,
+      temp_cat == "cat2-header2"    ~ cat2
+    ),
+      tier1_name = case_when (
+      temp_cat == "program1-header" ~ program1
+    ),
+      tier2_name = case_when (
+      temp_cat == "program2-header" ~ paste("    ",program2)
+    ),
+      tier3_name = case_when (
+      temp_cat == "cat2-header1"    ~ paste("        ",cat2),
+      temp_cat == "cat2-header2"    ~ paste("        ",cat2)
+    )
+  )
+
+excel_ready_rev <- correct_row_name_rev %>% select(tier1_name, tier2_name, tier3_name, net_amount)
+
+grand_total_amount <- excel_ready_rev %>% 
+  filter(!is.na(tier1_name)) %>% 
+  select(net_amount) %>% 
+  unlist() %>% 
+  sum()
+
+grand_total <- tibble(row_name = "Grand Total",
+                      net_amount = grand_total_amount)
+
+excel_ready_rev <- excel_ready_rev %>% 
+  unite(col = "row_name", tier1_name, tier2_name, tier3_name, sep="", na.rm=TRUE)
+
+excel_ready_rev <- excel_ready_rev %>% 
+  bind_rows(grand_total) %>% 
+  mutate(net_amount = as.character(net_amount))
+
+Encoding(excel_ready_rev$row_name) <- "UTF-16" 
+
+
+# Expenditures =================================================================
+
+test_agg_by_p1_p2_p3_c3 <- report_by_year %>%
+  pluck("fy19") %>%
+  group_by(program1, program2, cat3,type ) %>%
+  summarize(net_amount = sum(amount)) 
+
+
+test_agg_by_p1 <- report_by_year %>% 
+  pluck("fy19") %>% 
+  group_by(program1,type) %>% 
+  summarize(net_amount = sum(amount)) %>% 
+  mutate(program2 = NA,
+         cat3     = NA)
+
+test_agg_by_p2 <- report_by_year %>% 
+  pluck("fy19") %>% 
+  group_by(program2,type) %>% 
+  summarize(net_amount = sum(amount)) %>% 
+  mutate(program1 = NA,
+         cat3     = NA)
+
+
+
+agg <- test_agg_by_p1_p2_p3_c3 %>%
+  bind_rows(test_agg_by_p1) %>% 
+  bind_rows(test_agg_by_p2)
+
+agg2 <- as.data.frame(agg)
+
+
+atomized <- agg2 %>%
+  replace_na(list(program1="0001",
+                   program2="0001",
+                   cat3="0001")) %>% 
+  arrange(program1, program2,cat3)
+
+atomized_exp <- atomized %>% filter(type ==1)
+
+exp_primary <- atomized_exp %>%
+  mutate(
+    temp_cat = case_when(
+      program1 == "0001" ~ "program2-header",
+      program1 != "0001" & program2 == "0001" ~ "program1-header",
+      program1 != "0001" & program2 != "0001" & cat3 != "0001" ~ "cat3-header1",
+      program1 != "0001" & program2 != "0001" & cat3 == "0001" ~ "cat3-header2"
+    ),
+    
+    cat3 = case_when(
+      program1 == "0001" ~ "0001",
+      program1 != "0001" & program2 == "0001" ~ "0001",
+      program1 != "0001" & program2 != "0001" & cat3 != "0001" ~ cat3,
+      program1 != "0001" & program2 != "0001" & cat3 == "0001" ~ "(blank)"
+    ),
+    
+    program1 = case_when(
+      str_extract(program2, "^[:digit:]") == "0" & cat3 =="0001" & program2!="0001"~ "0001 REGULAR PROGRAMS - ELEMENTARY/SECONDARY (LOCAL)",
+      str_extract(program2, "^[:digit:]{2}") == "12" & cat3 =="0001" & program2!="0001"~ "1200 SPECIAL EDUCATION",
+      str_extract(program2, "^[:digit:]{2}") == "15" & cat3 =="0001" & program2!="0001"~ "1500 SUMMER SCHOOL AND EXTENDED YEAR PROGRAMS",
+      str_extract(program2, "^[:digit:]{2}") == "16" & cat3 =="0001" & program2!="0001"~ "1600 ADULT/CONTINUING EDUCATION PROGRAMS",
+      str_extract(program2, "^[:digit:]{2}") == "20" & cat3 =="0001" & program2!="0001"~ "2000 SCHOOL LEVEL PROGRAMS",
+      str_extract(program2, "^[:digit:]{2}") == "37" & cat3 =="0001" & program2!="0001"~ "3700 COMMUNITY SERVICES PROGRAMS",
+      str_extract(program2, "^[:digit:]") == "5" & cat3 =="0001" & program2!="0001"~ "5000 STATE PROGRAMS (Except Sp Ed, Adult Ed, ATE prog)",
+      str_extract(program2, "^[:digit:]") == "7" & cat3 =="0001" & program2!="0001"~ "7000 FEDERAL PROGRAMS",
+      str_extract(program2, "^[:digit:]") == "8" & cat3 =="0001" & program2!="0001"~ "8000 ENTERPRISE PROGRAMS",
+      str_extract(program2, "^[:digit:]") == "9" & cat3 =="0001" & program2!="0001"~ "9999 UNDISTRIBUTED BY PROGRAM",
+      TRUE ~ program1
+    )
+    
+  ) %>% 
+  
+  #factor on temp_cat. make program1 > program2 > cat3-header1 > cat3-headerblank
+  mutate(temp_cat = factor(
+      temp_cat,
+      levels = c(
+        "program1-header",
+        "program2-header",
+        "cat3-header1",
+        "cat3-header2"
+      )
+    )
+)
+
+correct_arrange_exp <- exp_primary %>% arrange(program1,program2, temp_cat,cat3 )
+
+correct_row_name_exp<-correct_arrange_exp %>% 
+  mutate(
+    tier_name = case_when (
+      temp_cat == "program1-header" ~ program1,
+      temp_cat == "program2-header" ~ program2,
+      temp_cat == "cat3-header1"    ~ cat3,
+      temp_cat == "cat3-header2"    ~ cat3
+    ),
+      tier1_name = case_when (
+      temp_cat == "program1-header" ~ program1
+    ),
+      tier2_name = case_when (
+      temp_cat == "program2-header" ~ paste("    ",program2)
+    ),
+      tier3_name = case_when (
+      temp_cat == "cat3-header1"    ~ paste("        ",cat3),
+      temp_cat == "cat3-header2"    ~ paste("        ",cat3)
+    )
+  )
+
+excel_ready_exp <- correct_row_name_exp %>% select(tier1_name, tier2_name, tier3_name, net_amount)
+
+grand_total_amount <- excel_ready_exp %>% 
+  filter(!is.na(tier1_name)) %>% 
+  select(net_amount) %>% 
+  unlist() %>% 
+  sum()
+
+grand_total <- tibble(row_name = "Grand Total",
+                      net_amount = grand_total_amount)
+
+excel_ready_exp <- excel_ready_exp %>% 
+  unite(col = "row_name", tier1_name, tier2_name, tier3_name, sep="", na.rm=TRUE)
+
+excel_ready_exp <- excel_ready_exp %>%
+  bind_rows(grand_total) %>% 
+  mutate(net_amount = as.character(net_amount))
+Encoding(excel_ready_exp$row_name) <- "UTF-16" 
+
+
+# Consolidate for Export
+
+info_tibble <- tibble(row_name = c(paste("LEA Name: ", lea_name),
+                                     paste("Fiscal Year: ", "2019")),
+                      net_amount = NA)
+
+break_tibble_rev <- tibble(row_name = "---------------------------------- REVENUE BREAKDOWN ----------------------------------",
+                           net_amount = NA)
+
+break_tibble_exp <- tibble(row_name = "------------------------------- EXPENDITURE BREAKDOWN --------------------------------",
+                           net_amount = NA)
+
+break_tibble <- tibble(row_name =     "--------------------------------------------------------------------------------------------------",
+                        net_amount = NA)
+
+blank_tibble <- tibble(row_name = NA,
+                        net_amount = NA)
+colname_tibble <- tibble(row_name = "Name of Program / Object",
+                         net_amount = "Net Amount")
+excel_export <- info_tibble %>% 
+  bind_rows(blank_tibble) %>%
+  bind_rows(blank_tibble) %>%
+  bind_rows(break_tibble) %>%
+  bind_rows(break_tibble_rev) %>%
+  bind_rows(break_tibble) %>% 
+  bind_rows(colname_tibble) %>%
+  bind_rows(excel_ready_rev) %>% 
+  bind_rows(blank_tibble) %>%
+  bind_rows(blank_tibble) %>%
+  bind_rows(break_tibble) %>% 
+  bind_rows(break_tibble_exp) %>% 
+  bind_rows(break_tibble) %>% 
+  bind_rows(colname_tibble) %>% 
+  bind_rows(excel_ready_exp) %>% 
+  mutate(net_amount = as.character(net_amount))
+
+excel_export<- excel_export %>%replace_na(
+  list(tier1_name = "",
+       tier2_name = "",
+       tier3_name = "",
+       net_amount = ""))
+
+
+
+
+#Solves this weird UTF character problem.
+Encoding(excel_export$row_name) <- "UTF-16"   
+
+#formatting requested by Matt for readability
+class(excel_export$net_amount) <- "accounting"
+
+return (excel_export)
+}
+```
+
+# IV. Query  
+```{r}
+lea_names<-
+dbGetQuery(
+  odbc_aws,
+  paste(
+    "SELECT DISTINCT name
+     FROM entity
+     WHERE govt_lvl = 'K12 EDUCATION' 
+      AND name != 'xk12' 
+      AND name != 'xxk12'
+    "
+  )) %>% select(name) %>% arrange(name)%>%  unlist()
+```
+
+
+# V. Execute
+```{r}
+ledger_reports <- lea_names %>% map(generate_ledger_report)
+
+names(ledger_reports) <- lea_names
+
+beep("fanfare") # so I know when it is done
+```
+
+# VI. Export
+
+```{r}
+wb <- createWorkbook()
+
+for(name in lea_names){
+  sheet_name <- str_trunc(name, 30, side = c("right"), ellipsis = "...")
+  tempdata<- ledger_reports %>% pluck(name)
+  addWorksheet(wb, sheet_name)
+  writeData(wb, sheet_name,tempdata,colNames = FALSE)
+  setColWidths(wb, sheet_name, cols = 1, widths = 70.0)
+  setColWidths(wb, sheet_name, cols = 2, widths = 30.0)
+}
+
+saveWorkbook(wb, file = "usbe_ledger_reports.xlsx",  overwrite = TRUE)
+
+rm(tempdata, name, sheet_name, wb, lea_names)
+```
+
+# VI. Disconnect from DB
+```{r}
+dbDisconnect(odbc_aws)
+rm(dsn_aws, odbc_aws)
+```
+
+
+
