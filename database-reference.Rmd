@@ -1,0 +1,151 @@
+---
+title: "database-reference"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+dsn_aws        <- "transpAWS"
+dsn_salesforce <- "salesforce"
+```
+
+```{r}
+options(scipen=6)
+
+library(lubridate)
+library(magrittr)
+library(odbc)
+library(openxlsx)
+library(readxl) 
+library(tidyverse)
+library(stringi) 
+library(tidyr)
+
+odbc_aws <- dbConnect(odbc::odbc(), dsn_aws)
+odbc_sf  <- dbConnect(odbc::odbc(), dsn_salesforce)
+
+rm(dsn_aws, dsn_salesforce)
+```
+
+```{r}
+batch_head <-
+  dbGetQuery(
+    odbc_aws,
+    paste(
+      "
+      SELECT *
+      FROM batch
+      LIMIT 1000
+      "
+      )
+    ) %>%
+  as_tibble()
+```
+
+```{r, eval = FALSE}
+batch_head %>% view()
+```
+
+
+```{r}
+contact_head <-
+  dbGetQuery(
+    odbc_aws,
+    paste(
+      "
+      SELECT *
+      FROM contact
+      LIMIT 1000
+      "
+      )
+    ) %>%
+  as_tibble()
+```
+
+```{r, eval = FALSE}
+contact_head %>% view()
+```
+
+
+```{r}
+entity_head <-
+  dbGetQuery(
+    odbc_aws,
+    paste(
+      "
+      SELECT *
+      FROM entity
+      LIMIT 1000
+      "
+      )
+    ) %>%
+  as_tibble()
+```
+
+```{r, eval = FALSE}
+entity_head %>% view()
+```
+
+
+```{r}
+transaction_head <-
+  dbGetQuery(
+    odbc_aws,
+    paste(
+      "
+      SELECT *
+      FROM transaction
+      LIMIT 1000
+      "
+      )
+    ) %>%
+  as_tibble()
+```
+
+```{r, eval = FALSE}
+transaction_head %>% view()
+```
+
+```{r}
+transaction_group_head <-
+  dbGetQuery(
+    odbc_aws,
+    paste(
+      "
+      SELECT *
+      FROM transaction_group
+      LIMIT 1000
+      "
+      )
+    ) %>%
+  as_tibble()
+```
+
+```{r, eval = FALSE}
+transaction_group_head %>% view()
+```
+
+
+```{r}
+vendor_head <-
+  dbGetQuery(
+    odbc_aws,
+    paste(
+      "
+      SELECT *
+      FROM vendor
+      LIMIT 1000
+      "
+      )
+    ) %>%
+  as_tibble()
+```
+
+```{r, eval = FALSE}
+vendor_head %>% view()
+```
+
+

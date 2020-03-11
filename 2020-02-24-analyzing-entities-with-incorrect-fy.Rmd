@@ -1,0 +1,200 @@
+---
+title: "2020-02-24-analyzing-entities-with-incorrect-fy"
+author: "Alexander Nielson"
+date: "2/24/2020"
+output: html_document
+---
+there were a bunch of entities who had an incorrect fiscal year assigned to upload data. The data was uploaded, but not in the right fiscal year, so the entities were confused. I used this script to find those entities, and then I manually sent them emails letting them know the periods they needed to fix. 
+
+```{r}
+library(data.table)
+library(janitor)
+library(magrittr)
+library(odbc)
+library(readxl)
+library(splitstackshape)
+library(svDialogs)
+library(tidyverse)
+```
+
+```{r}
+dsn_sf <- "Salesforce"
+odbc_salesforce <- dbConnect(odbc::odbc(), dsn_sf)
+
+
+```
+
+```{r}
+new_report <- read.csv("S:\\Localgov\\LG Compliance\\Transparency Compliance\\Compliance Reports\\2020-02-04 Cycle Fixed\\2020-02-19 SF Status Should Be DE or Hold.csv", header = TRUE)
+
+
+old_report <- read.csv("S:\\Localgov\\LG Compliance\\Transparency Compliance\\Compliance Reports\\2020-02-04 Cycle Fixed\\2020-02-18 SF Status Should Be DE or Hold.csv", header = TRUE)
+
+difference <- old_report %>% anti_join(new_report, by = c("sf_id"="sf_id"))
+
+
+```
+
+## find_an_address()
+
+```{r}
+find_an_address <- function(street_one, street_two, address_one, address_two) {
+  # Compare two street addresses and select the corresponding address 
+  # information for the street address that is not NA.
+  #
+  # Arguments:
+  #  street_one (char): The default street address.
+  #  street_two (char): The street address to compare against.
+  #  address_one (char): The portion of the complete address corresponding to 
+  #    street_one.
+  #  address_two (char): The portion of the complete address corresponding to 
+  #    street_two.
+  #
+  # Returns:
+  #   Character.
+  
+  if (is.na(street_one) && !is.na(street_two)) {
+    
+    address_two
+  
+  } else {address_one}
+}
+```
+
+
+# Get contact information
+```{r}
+account <- 
+  dbGetQuery(
+    odbc_salesforce,
+    "SELECT 
+      a.Id                         AS sf_id,
+      a.Name                       AS entity_name, 
+      r.Name                       AS record_type,
+      a.Is_Solely_Fee_Assessing__c AS non_taxing_entity,
+      a.ShippingStreet, a.ShippingCity, a.ShippingState, a.ShippingPostalCode,
+      a.BillingStreet, a.BillingCity, a.BillingState, a.BillingPostalCode,
+      a.Mailing_county__c          AS mailing_county,
+      a2.Name                      AS tax_holding_county,
+      a.FINET_Vendor_Code__c       AS finet_code,
+      a.Email__c                   AS email_account
+    FROM Account AS a
+    LEFT JOIN RecordType AS r
+    ON a.RecordTypeId = r.Id
+    LEFT JOIN Account AS a2
+    ON a.Tax_Holding_County__c = a2.Id
+    WHERE a.IsDeleted = FALSE
+    AND a.Entity_Status__c NOT IN ('Inactive', 'Dissolved')
+    AND a.Name <> 'test city 2'
+    AND a.RecordTypeId IN (
+      SELECT id
+      FROM RecordType
+      WHERE Name IN (
+        'AOG', 'City', 'Community Reinvestment Agency', 'Conservation District',
+        'County', 'District Health', 'Housing', 
+        'Independent/Quasi State Entity', 'Interlocal', 
+        'Local and Special Service District', 'Mental Health', 'Non Profits',
+        'Redevelopment Agency/Project Area', 
+        'School District or Charter School', 'Town'))") %>% 
+  mutate(street = pmap_chr(
+                    list(
+                      street_one  = as.list(ShippingStreet),
+                      street_two  = as.list(BillingStreet),
+                      address_one = as.list(ShippingStreet),
+                      address_two = as.list(BillingStreet)),
+                    find_an_address),
+         city   = pmap_chr(
+                    list(
+                      street_one  = as.list(ShippingStreet),
+                      street_two  = as.list(BillingStreet),
+                      address_one = as.list(ShippingCity),
+                      address_two = as.list(BillingCity)),
+                    find_an_address),    
+         state   = pmap_chr(
+                    list(
+                      street_one  = as.list(ShippingStreet),
+                      street_two  = as.list(BillingStreet),
+                      address_one = as.list(ShippingState),
+                      address_two = as.list(BillingState)),
+                    find_an_address),         
+         zip     = pmap_chr(
+                    list(
+                      street_one  = as.list(ShippingStreet),
+                      street_two  = as.list(BillingStreet),
+                      address_one = as.list(ShippingPostalCode),
+                      address_two = as.list(BillingPostalCode)),
+                    find_an_address)) %>% 
+  select(sf_id, entity_name, record_type, non_taxing_entity, 
+         street, city, state, zip, mailing_county, tax_holding_county,
+         finet_code)
+
+# CFOs and CAOs sometimes have an address that is different from the entity's
+# address. Though it would be more convenient for the CFO and CAO to receive the 
+# notice at the address specific to their contact information, I decided to 
+# send notices to the entity address. Given that the CFO and CAO can change 
+# without notifying OSA, it seems that sending the notice to the entity's 
+# address is the best way to make sure that someone within the entity 
+# organization will see it.
+
+cfo <- 
+  dbGetQuery(
+    odbc_salesforce,
+    "SELECT
+      a.Name            AS entity_name, 
+      c.Name            AS cfo_name,
+      c.Email           AS cfo_email
+      -- MailingStreet     AS cfo_street, 
+      -- MailingCity       AS cfo_city, 
+      -- MailingState      AS cfo_state, 
+      -- MailingPostalCode AS cfo_zipcode
+    FROM Contact AS c
+    JOIN Account AS a
+    ON c.AccountId = a.Id
+    WHERE c.IsDeleted = FALSE
+    AND c.IsDeactivated__c = FALSE
+    AND Role__c = 'CFO'")
+
+cao <- 
+  dbGetQuery(
+    odbc_salesforce,
+    "SELECT
+      a.Name            AS entity_name, 
+      c.Name            AS cao_name,
+      c.Email           AS cao_email
+      -- MailingStreet     AS cao_street, 
+      -- MailingCity       AS cao_city, 
+      -- MailingState      AS cao_state, 
+      -- MailingPostalCode AS cao_zipcode
+    FROM Contact AS c
+    JOIN Account AS a
+    ON c.AccountId = a.Id
+    WHERE c.IsDeleted = FALSE
+    AND c.IsDeactivated__c = FALSE
+    AND Role__c = 'CAO'")
+
+# Check for entities with multiple CFOs:
+multiple_cfos <- 
+  cfo[duplicated(cfo$entity_name), "entity_name"] %>% 
+  tibble(has_multiple_cfos = .) %>% 
+  distinct(has_multiple_cfos) %>% 
+  arrange(has_multiple_cfos)
+
+multiple_caos <- 
+  cao[duplicated(cao$entity_name), "entity_name"] %>% 
+  tibble(has_multiple_caos = .) %>% 
+  distinct(has_multiple_caos) %>% 
+  arrange(has_multiple_caos)
+
+```
+
+
+```{r}
+report <- difference %>% 
+  left_join (account, by = c("sf_id" = "sf_id")) %>% 
+  left_join (cfo, by = c("entity_name" = "entity_name")) %>% 
+  left_join (cao, by = c("entity_name" = "entity_name")) %>% 
+  select(name, missing_exp, missing_rev, missing_w2, last_processed_batch, last_uploaded_batch, govt_type, street, city, state, zip, mailing_county,cfo_email, cao_email) %>% 
+  mutate(emails = paste(cfo_email,",", cao_email)) %>% 
+  select(name,missing_rev, missing_exp, missing_w2, last_processed_batch, last_uploaded_batch, emails)
+```
+

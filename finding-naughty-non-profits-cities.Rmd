@@ -1,0 +1,270 @@
+---
+title: "finding-naughty-non-profits-cities"
+author: "Alexander Nielson"
+date: "3/10/2020"
+output: html_document
+---
+I messed up in the last report and only did Counties! So this will fix to include all the different types in cities. 
+
+# Libraries 
+```{r}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(odbc)
+
+library(fuzzyjoin)
+```
+
+```{r}
+dsn_aws        <- "transpAWS"
+dsn_salesforce <- "salesforce"
+
+odbc_aws <- dbConnect(odbc::odbc(), dsn_aws)
+odbc_sf  <- dbConnect(odbc::odbc(), dsn_salesforce)
+
+rm(dsn_aws, dsn_salesforce)
+```
+
+##load Lookup table for uca
+```{r}
+osa_lookup_file_name <- "osa_lookup.xlsx"
+
+osa_lookup <- excel_sheets(osa_lookup_file_name) %>%
+  map(read_excel, path = osa_lookup_file_name)
+
+names(osa_lookup) <- c("fund", "funct", "account")
+
+rm(osa_lookup_file_name)
+
+
+```
+
+```{r}
+grant_accounts <- osa_lookup %>%
+  pluck("account") %>%
+  filter(str_detect(description %>% str_to_lower(),"grant"))
+grant_accounts 
+```
+
+
+```{r}
+
+# go to secure.utah.gov and get the batch_id.  
+ 
+report<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT 
+                e.name AS entity_name,
+                e.id AS entity_id,
+                e.govt_lvl AS entity_gov_level,
+                
+                t.amount AS amount,
+                t.type AS type,
+                t.account_number AS account_number,
+                t.fiscal_year AS fiscal_year,
+                
+                v.name AS vendor_name,
+                v.id AS vendor_id
+              FROM entity e
+              JOIN batch b ON b.entity_id = e.id
+              JOIN transaction t ON b.id = t.batch_id
+              JOIN vendor v ON v.id = t.vendor_id
+              WHERE govt_lvl = 'CITY'
+              AND (t.fiscal_year = '2018' OR t.fiscal_year = '2019')
+
+              "))
+
+#2,757,462 records queired. 
+```
+
+```{r}
+report <- report %>% 
+    filter(str_detect(
+      .$account_number,
+      regex("^[:digit:]{3}-[:digit:]{6}-[:digit:]{8}$")
+    )) %>% 
+  mutate(
+     account = .[["account_number"]] %>%  substr(12, 19)
+  )
+
+
+
+transactions_with_grants<- report %>% 
+  inner_join(grant_accounts, by = c("account"="number"))
+
+transactions_with_grants_no_name_provided <- transactions_with_grants %>% filter(vendor_name =="Not Applicable")
+
+transactions_with_grants <- transactions_with_grants %>% filter(vendor_name !="Not Applicable")
+
+```
+
+so there are 65,508 transactions with 
+
+```{r}
+transactions_with_grants_rev <- transactions_with_grants %>% 
+  filter(type==2)
+
+transactions_with_grants_exp <- transactions_with_grants %>% 
+  filter(type==1)
+```
+
+
+```{r}
+exp_agg<- transactions_with_grants_exp %>% group_by(vendor_id, vendor_name, fiscal_year) %>% 
+  summarize(net_amount = sum(amount),
+            num_transactions = n())
+```
+
+```{r}
+exp_agg_g25k<- exp_agg %>% filter(net_amount >=25000)
+```
+
+
+#Query Salesforce data
+```{r}
+sf_non_profits <- 
+  dbGetQuery(
+    odbc_sf,
+   
+    "SELECT 
+      a.Name                          AS name,
+      a.Id                            AS id,
+      a.Transparency_ID__c            AS t_id,
+      a.Fiscal_Year_Begins__c         AS begin_fy,
+      a.Expense_Revenue_Start_Date__c AS begin_report_er, 
+      a.Wage_Start_Date__c            AS begin_report_w2,
+      r.Name AS govt_type
+    FROM Account         AS a
+    LEFT JOIN RecordType AS r
+      ON a.RecordTypeId = r.Id
+    WHERE a.RecordTypeId IN (
+      SELECT Id
+      FROM RecordType
+      WHERE SobjectType = 'Account'
+      AND Name  IN ('Non Profits'))
+    AND a.Name NOT IN (
+      'Intermountain Power Agency',
+      'test city 2',
+      'Utah Associated Municipal Power Systems',
+      'Utah Municipal Power Agency')
+    --AND Entity_Status__c NOT IN ('Inactive', 'Dissolved')
+    
+    ") %>% 
+  as_tibble() %>% 
+  mutate(
+  govt_type = 
+    if_else(
+      name %in% 
+        c("State of Utah",
+          "Utah System of Higher Education - Student Loan Guarantee Program",
+          "Utah System of Higher Education - Student Loan Purchase Program",
+          "Utah System of Higher Education - Utah Educational Savings Plan dba my529",
+          "Utah System of Higher Education - Utah State Board of Regents"),
+      "Monitored State Agency",
+      govt_type)) %>% 
+  filter(govt_type != "State of Utah (agencies/depts/comp units/ etc.)") %>% 
+  # The State of Utah is required to report to Transparent Utah, but in most instances we do not monitor its data:
+  filter(name != "State of Utah") #%>% 
+  #select(-govt_type)
+
+```
+
+go make sure that the number of non profits matches the salesforce report that Calvin created. 
+
+lets make all the names loewr case to try and match easier
+```{r}
+# exp_agg_g25k <- exp_agg_g25k %>% 
+#   ungroup() %>% 
+#   mutate(vendor_name = str_to_lower(vendor_name))
+# 
+# sf_non_profits <- sf_non_profits %>% 
+#   mutate(name = str_to_lower(name))
+# 
+# # now I need to get rid of all the inc and corp stuff. 
+# 
+# exp_agg_g25k <- exp_agg_g25k %>% 
+#   mutate(vendor_name = str_replace_all(vendor_name,"inc|corp","" ),
+#          vendor_name = str_replace_all(vendor_name,"[:punct:]","" ))
+# 
+# sf_non_profits <- sf_non_profits %>% 
+#   mutate(name = str_replace_all(name,"inc|corp","" ),
+#          name = str_replace_all(name,"[:punct:]","" ))
+
+```
+
+
+
+```{r}
+# temp_join <- exp_agg_g25k %>% anti_join(sf_non_profits, by = c("vendor_name" = "name"))
+```
+
+
+```{r}
+# temp<- lapply(exp_agg_g25k$vendor_name, agrep, sf_non_profits$name, value = TRUE)
+```
+
+
+```{r}
+twg_over_25k <- transactions_with_grants %>% group_by(vendor_id, vendor_name,entity_name, entity_id, fiscal_year, account, description, level_primary, level_secondary, level_tertiary, level_quaternary) %>% 
+  summarize(net_amount = sum(amount),
+            num_twg = n()) %>% 
+  filter(net_amount>25000)
+
+twg_over_25k <- twg_over_25k %>%
+  ungroup() %>% 
+  mutate(vendor_name = str_to_lower(vendor_name)) %>%
+  filter(vendor_name != "not provided" & vendor_name !="not applicable") %>% 
+  mutate(
+   # vendor_name = str_replace_all(vendor_name, "inc|corp|corporation|incorporation", ""),
+    vendor_name = str_replace_all(vendor_name, "[:punct:]", "")
+  )
+
+sf_non_profits <- sf_non_profits %>%
+  mutate(name = str_to_lower(name)) %>%
+  mutate(#name = str_replace_all(name, "inc|corp|corporation|incorporation", ""),
+         name = str_replace_all(name, "[:punct:]", ""))
+
+```
+
+
+```{r}
+test_fuzzy_join<- twg_over_25k %>% 
+  stringdist_inner_join(sf_non_profits, by = c("vendor_name" = "name"), max_dist = 3)
+#manually checked that all were acceptable.
+```
+
+```{r}
+test_fuzzy_join %>% select(vendor_name, name)
+```
+
+
+```{r}
+red_twg_over_25k <- twg_over_25k %>% anti_join(test_fuzzy_join, by=c("vendor_id" = "vendor_id"))
+```
+
+lets get the names of all cities so we can remove them. 
+
+```{r}
+cities<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT name
+              FROM entity
+              WHERE govt_lvl = 'CITY'
+        
+              "))
+```
+
+```{r}
+red_twg_over_25k %>% filter(!str_detect(vendor_name, "city"))%>%  pull(vendor_name) %>% unique()
+```
+
+
+```{r}
+write_csv(red_twg_over_25k,"E:/rprojects/Transparency-Ad-Hoc/2020-03-03-finding-naughty-non-profits/new-non-profits-cities-only.csv")
+```
+

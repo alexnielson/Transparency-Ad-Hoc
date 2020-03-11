@@ -1,0 +1,356 @@
+---
+title: "finding-protection-indicators"
+author: "Alexander Nielson"
+date: "2/28/2020"
+output: html_document
+---
+
+# Program Description
+
+**Purpose**
+
+**Input(s)**
+
+```{r}
+dsn_aws        <- "transpAWS"
+dsn_salesforce <- "salesforce"
+```
+# Libraries and Data Sources
+
+```{r}
+options(scipen=6)
+
+library(lubridate)
+library(magrittr)
+library(odbc)
+library(readxl) 
+library(tidyverse)
+library(stringi) 
+library(tidyr)
+library(plotly)
+
+odbc_aws <- dbConnect(odbc::odbc(), dsn_aws)
+odbc_sf  <- dbConnect(odbc::odbc(), dsn_salesforce)
+
+rm(dsn_aws, dsn_salesforce)
+```
+
+```{r}
+batches_with_vendor_code<- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          t.id AS transaction_id,
+          t.batch_id AS transaction_batch_id,
+          
+          v.name AS vendor_name,
+          v.id AS vendor_id,
+          v.masked AS p_indicator
+          
+          FROM transaction t 
+          JOIN vendor v 
+            ON v.id =  t.vendor_id
+          WHERE t.vendor_id IS NOT NULL
+          LIMIT 100"
+          )
+    ) %>% 
+  as_tibble()
+
+```
+
+
+
+```{r}
+temp <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          t.id AS transaction_id,
+          t.batch_id AS transaction_batch_id,
+          
+          v.name AS vendor_name,
+          v.id AS vendor_id,
+          v.masked AS p_indicator
+          
+          FROM transaction t 
+          JOIN vendor v 
+            ON v.id =  t.vendor_id
+          WHERE t.vendor_code
+          LIMIT 100"
+          )
+    ) %>% 
+  as_tibble()
+```
+
+
+```{r}
+transaction_head <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT *
+          FROM transaction 
+          LIMIT 100"
+          )
+    ) %>% 
+  as_tibble()
+```
+
+```{r}
+vendor_head <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT *
+          FROM vendor
+          WHERE entity_id > 2
+          LIMIT 1000"
+          )
+    ) %>% 
+  as_tibble()
+```
+
+```{r}
+vendor_head <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT *
+          FROM vendor_summary
+          LIMIT 1000"
+          )
+    ) %>% 
+  as_tibble()
+```
+
+
+```{r}
+batch_head <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT *
+          FROM batch
+          WHERE status IN ('PROCESSED')
+          AND id > 40000
+          LIMIT 1000"
+          )
+    ) %>% 
+  as_tibble()
+```
+
+
+
+```{r}
+entity_head <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT *
+          FROM entity
+          LIMIT 1000"
+          )
+    ) %>% 
+  as_tibble()
+```
+
+
+```{r}
+temp_tib <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          e.id         AS entity_id,
+          e.name       AS entity_name,
+          
+          v.id         AS vendor_id,
+          v.name       AS vendor_name,
+          v.masked     AS probable_p_ind1,
+          v.codeHashed AS probable_p_ind2,
+          
+          t.id         AS transaction_id,
+          t.vendor_code AS transaction_vedor_code,
+          t.description AS transaction_description
+          
+          FROM entity e
+          JOIN vendor v 
+            ON e.id = v.entity_id
+          JOIN transaction t 
+            ON t.vendor_id = v.id
+          WHERE e.id = 9
+          "
+          )
+    ) %>% 
+  as_tibble()
+```
+
+```{r}
+temp_tib %>% filter(probable_p_ind1== 1)
+```
+
+
+
+```{r}
+entity_ids <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT DISTINCT
+          e.id         AS entity_id
+          FROM entity e
+
+          "
+          )
+    ) %>% 
+  as_tibble()
+```
+
+
+
+```{r}
+temp_tib <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          e.id         AS entity_id,
+          e.name       AS entity_name,
+          v.id         AS vendor_id,
+          v.name       AS vendor_name,
+          v.masked     AS probable_p_ind1,
+          v.codeHashed AS probable_p_ind2
+          
+          FROM entity e
+          JOIN vendor v 
+            ON e.id = v.entity_id
+          JOIN transaction t
+            on t.vendor_id = v.id
+          WHERE e.id = 3 AND
+          t.fiscal_year = 2019
+          "
+          )
+    ) %>% 
+  as_tibble()
+```
+
+
+```{r}
+get_transaction_info <- function(entity_id){
+  print(paste("querying for entity_id:",entity_id))
+  temp_tib <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          e.id         AS entity_id,
+          e.name       AS entity_name,
+          v.id         AS vendor_id,
+          v.name       AS vendor_name,
+          v.masked     AS p_ind,
+          t.batch_id   AS transaction_batch_id
+          
+          FROM entity e
+          JOIN vendor v 
+            ON e.id = v.entity_id
+          JOIN transaction t
+            on t.vendor_id = v.id
+          WHERE e.id = ",entity_id," AND v.masked = 1
+          "
+          )
+    ) %>% 
+  as_tibble()
+}
+
+```
+
+
+```{r}
+test_report <- entity_ids %>%  pull(entity_id) %>% map(get_transaction_info)
+```
+
+
+```{r}
+full_report <- bind_rows(test_report)
+```
+
+
+```{r}
+full_report %>% 
+  group_by(entity_name, vendor_id, vendor_name) %>% 
+  summarize(count = n())
+```
+
+```{r}
+full_report %>% 
+  group_by(entity_name) %>% 
+  summarize(count = n())
+```
+
+
+
+
+
+
+```{r}
+get_transaction_info <- function(entity_id){
+  print(paste("querying for entity_id:",entity_id))
+  temp_tib <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          e.id         AS entity_id,
+          e.name       AS entity_name,
+          v.id         AS vendor_id,
+          v.name       AS vendor_name,
+          v.codeHashed AS p_ind,
+          t.batch_id   AS transaction_batch_id
+          
+          FROM entity e
+          JOIN vendor v 
+            ON e.id = v.entity_id
+          JOIN transaction t
+            on t.vendor_id = v.id
+          WHERE e.id = ",entity_id," AND v.codeHashed = 0
+          "
+          )
+    ) %>% 
+  as_tibble()
+}
+```
+
+```{r}
+test_report2 <- entity_ids %>%  pull(entity_id) %>% map(get_transaction_info)
+```
+
+
+```{r}
+get_transaction_info <- function(entity_id){
+    print(paste("querying for entity_id:",entity_id))
+  temp_tib <- dbGetQuery(
+    odbc_aws,
+    paste("
+          SELECT 
+          e.id          AS entity_id,
+          e.name        AS entity_name,
+          v.id          AS vendor_id,
+          v.name        AS vendor_name,
+          v.codeHashed  AS p_ind,
+          t.batch_id    AS transaction_batch_id,
+          t.vendor_code AS vendor_code
+          FROM entity e
+          JOIN vendor v 
+            ON e.id = v.entity_id
+          JOIN transaction t
+            on t.vendor_id = v.id
+          WHERE e.id = ",entity_id,"  AND t.vendor_code IS NOT NULL
+          "
+          )
+    ) %>% 
+  as_tibble()
+}
+```
+
+```{r}
+test_report2 <- entity_ids %>%  pull(entity_id) %>% map(get_transaction_info)
+```
+
+```{r}
+massive_file <- bind_rows(test_report2)
+```
+
+```{r}
+
+```
+

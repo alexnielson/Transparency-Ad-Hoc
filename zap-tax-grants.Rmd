@@ -1,0 +1,225 @@
+---
+title: "zap-tax-grants"
+author: "Alexander Nielson"
+date: "3/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries 
+```{r}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(odbc)
+library(fuzzyjoin)
+```
+
+```{r}
+dsn_aws        <- "transpAWS"
+dsn_salesforce <- "salesforce"
+
+odbc_aws <- dbConnect(odbc::odbc(), dsn_aws)
+odbc_sf  <- dbConnect(odbc::odbc(), dsn_salesforce)
+
+rm(dsn_aws, dsn_salesforce)
+```
+
+##load Lookup table for uca
+```{r}
+osa_lookup_file_name <- "osa_lookup.xlsx"
+
+osa_lookup <- excel_sheets(osa_lookup_file_name) %>%
+  map(read_excel, path = osa_lookup_file_name)
+
+names(osa_lookup) <- c("fund", "funct", "account")
+
+rm(osa_lookup_file_name)
+
+
+```
+
+
+```{r}
+arts_foundations<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT *
+              FROM vendor
+              WHERE name LIKE '%arts%' 
+                AND name LIKE '%foundation%'
+                ANd name LIKE '%Timpanogos%'
+        
+              "))
+
+taf_ids <- arts_foundations %>% pull(id)
+```
+
+```{r}
+taf_transactions<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT 
+                e.name AS entity_name,
+                e.id AS entity_id,
+                e.govt_lvl AS entity_gov_level,
+                
+                t.amount AS amount,
+                t.type AS type,
+                t.account_number AS account_number,
+                t.fiscal_year AS fiscal_year,
+                
+                v.name AS vendor_name,
+                v.id AS vendor_id
+              FROM entity e
+              JOIN batch b ON b.entity_id = e.id
+              JOIN transaction t ON b.id = t.batch_id
+              JOIN vendor v ON v.id = t.vendor_id
+              WHERE v.id = 3982617 
+                 OR v.id = 5747965 
+                 OR v.id = 6624623
+        
+              "))
+```
+
+#find zap vendors
+```{r}
+zap_tax_grants<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT *
+              FROM vendor
+              WHERE name LIKE '%zoo%' 
+                AND name LIKE '%arts%'
+                ANd name LIKE '%park%'
+        
+              "))
+print(zap_tax_grants)
+
+```
+
+I only think the 937089 vendor is applicable to the ZAP search. The others seem like renewals. 
+
+```{r}
+zap_transactions<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT 
+                e.name AS entity_name,
+                e.id AS entity_id,
+                e.govt_lvl AS entity_gov_level,
+                
+                t.amount AS amount,
+                t.type AS type,
+                t.account_number AS account_number,
+                t.fiscal_year AS fiscal_year,
+                
+                v.name AS vendor_name,
+                v.id AS vendor_id
+              FROM entity e
+              JOIN batch b ON b.entity_id = e.id
+              JOIN transaction t ON b.id = t.batch_id
+              JOIN vendor v ON v.id = t.vendor_id
+              WHERE v.id = 937089
+                 # OR v.id = 2992269
+                 # OR v.id = 3182771
+        
+              "))
+
+zap_transactions
+```
+
+that was a dead end. 
+
+I will try by searching for entities with an account like the one in American Fork and TAF. 
+226-500000-40060000
+
+```{r}
+# zap_transactions<- 
+#       dbGetQuery(
+#         odbc_aws,
+#         paste("
+#               SELECT 
+#                 e.name AS entity_name,
+#                 e.id AS entity_id,
+#                 e.govt_lvl AS entity_gov_level,
+#                 
+#                 t.amount AS amount,
+#                 t.type AS type,
+#                 t.account_number AS account_number,
+#                 t.fiscal_year AS fiscal_year,
+#                 
+#                 v.name AS vendor_name,
+#                 v.id AS vendor_id
+#               FROM entity e
+#               JOIN batch b ON b.entity_id = e.id
+#               JOIN transaction t ON b.id = t.batch_id
+#               JOIN vendor v ON v.id = t.vendor_id
+#               WHERE t.account_number = '226-500000-40060000'
+#         
+#               "))
+```
+
+```{r}
+cities_names<- 
+      dbGetQuery(
+        odbc_aws,
+        paste("
+              SELECT name
+              FROM entity e
+              WHERE govt_lvl = 'CITY'
+              "))
+```
+
+
+```{r}
+
+get_trans_with_account_number <- function(entity_name) {
+  zap_grant_accounts <-
+    dbGetQuery(
+      odbc_aws,
+      paste0(
+        "
+              SELECT
+                e.name AS entity_name,
+                e.id AS entity_id,
+                e.govt_lvl AS entity_gov_level,
+
+                t.amount AS amount,
+                t.type AS type,
+                t.account_number AS account_number,
+                t.fiscal_year AS fiscal_year,
+
+                v.name AS vendor_name,
+                v.id AS vendor_id
+              FROM entity e
+              JOIN batch b ON b.entity_id = e.id
+              JOIN transaction t ON b.id = t.batch_id
+              JOIN vendor v ON v.id = t.vendor_id
+              WHERE govt_lvl = 'CITY'
+                AND e.name = '", entity_name,"'
+                AND t.account_number = '226-500000-40060000'
+
+              "
+      )
+    )
+}
+
+```
+
+```{r}
+#temp<- get_trans_with_account_number("American Fork")
+```
+
+```{r}
+test<- cities_names %>% pull(name) %>% map(get_trans_with_account_number)
+```
+
+
